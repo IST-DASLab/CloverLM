@@ -10,3 +10,4 @@ PyTorch codebase used for the training and evaluation of [CloverLM](https://gith
 ### Training
 
 ### Evaluation
+See [./src/evals/README.md](src/evals/README.md)
