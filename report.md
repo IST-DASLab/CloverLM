@@ -16,17 +16,19 @@ Austria
 
 ## Abstract
 
-We describe a system to pretrain a 4B-parameter model called CloverLM to performance similar to the standard GPT3-175 / OPT-175B models, when measured on popular zero-shot tasks, in a highly cost-effective manner. Our approach works by combining multiple known techniques: (1) Accurate native NVFP4 training via the Quartet II algorithm \[QuartetII\]; (2) High-quality data training on the CLIMB dataset \[Climb\]; (3) Several model- and framework-specific optimizations.
+We describe a system to pretrain a 4B-parameter model, called CloverLM, aimed at performance similar to the standard GPT3-175 / OPT-175B models, when measured on popular zero-shot tasks, in a highly cost-effective manner. Our approach works by combining multiple known techniques: 
 
-While we claim no technical novelty, and our results are not highly surprising, we believe it is notable that we can reach OPT-175B-level of accuracy in pure NVFP4 in approximately 1600 B300 GPU hours, for an estimated cost between $5'600 (spot) and $10'000 (on-demand), for the main run, on the Verda cloud provider \[Verda\]. Our code is available at [https://github.com/IST-DASLab/CloverLM](https://github.com/IST-DASLab/CloverLM).
+* Accurate native NVFP4 training via the Quartet II algorithm \[QuartetII\];
+* High-quality data training on the CLIMB dataset \[Climb\];
+* Several model- and framework-specific optimizations.
+
+While we claim no technical novelty, it is notable that we can reach OPT-175B-level of accuracy on multi-choice zero-shots in pure NVFP4 using approximately 1600 B300 GPU hours, for an estimated cost between $5'600 (spot) and $10'000 (on-demand), for the main run, on the Verda cloud provider \[Verda\]. Our code is available at [https://github.com/IST-DASLab/CloverLM](https://github.com/IST-DASLab/CloverLM).
 
 ## Overview
 
 Large language model (LLM) pretraining usually deals with maximizing parameters, tokens, and GPU hours. In this project, we investigate a narrower question: how cost-effectively can we pretrain a model that reaches similar performance, measured on standard zero-shot tasks, of GPT3-175B \[GPT3\], the model recognized as a breakthrough in language modelling, or that of its open counterpart called OPT-175 \[OPT\]?
 
-For this, we combine known techniques: (1) a strong data mixture automatically-optimized by NVIDIA, called CLIMB/ClimbMix \[Climb\], (2) native training in NVIDIA's efficient low-precision NVFP4 format, as enabled by our existing Quartet II technique \[QuartetII\], and (3) a modest amount of training-system engineering.
-
-The contribution of this project is empirical: we assemble an existing low-precision recipe, an existing high-quality dataset, and a simple decoder-only model, and test whether the resulting training run remains stable and competitive at nontrivial scale.
+For this, we combine known techniques: (1) a strong data mixture automatically-optimized by NVIDIA, called CLIMB/ClimbMix \[Climb\], (2) native training in NVIDIA's efficient low-precision NVFP4 format, as enabled by our existing Quartet II technique \[QuartetII\], and (3) a small amount of training-system engineering.
 
 While we do not claim any technical novelty, we believe that the outcome is noteworthy. Specifically, we show that a standard dense 4B-parameter model trained for about 310B tokens on 8 x B300 GPUs reaches a compact zero-shot average that is slightly (0.6%) above OPT-175B on the most directly comparable aggregate we report, while remaining slightly below (1%) GPT-3 175B on the stricter historical aggregate. At current pricing on the Verda cloud service \[Verda\], the core eight-day run to train this model costs about $10.7k on-demand or roughly $4.6k on spot pricing. This cost ignores prior ablations, cooldown branches, and separate evaluation jobs \[Verda\], whose cost we estimate to around $1.5k. The main claim of this report is that the overall cost of reaching this quality regime can be pushed much lower than intuition might suggest.
 
@@ -56,11 +58,11 @@ The optimizer was Adam with a peak learning rate of $3\\times 10^{-3}$, a warmup
 
 ### Run progress
 
-#### Preliminary runs.
+#### Preliminary runs
 
 The project reached the final configuration for the long run in two stages. First, we executed smaller 0.5B-, 1.5B-, and 4B-family runs to debug kernel integration, dataloading, and distributed evaluation. Second, we launched a complete 4B-family validation run on the 55B-token ClimbMix100m shard. That run completed 160k steps (83.9B sampled tokens) stably and finished with training loss 2.3389 and validation loss 2.2948\. This run showed that the recipe and code could handle 4B-scale pretraining run.
 
-#### Main run.
+#### Main run
 
 The main run then targeted the fully tokenized ClimbMix corpus and executed 590k steps, i.e. 309.3B sampled training tokens. Early in the run, the system sustained roughly 434k tokens/s in aggregate (about 54k tokens/s/GPU); later checkpoints remained in the same general 50-54k tokens/s/GPU regime. At this throughput, the wall-clock duration is about eight days on a single 8 x B300 server. The run produced checkpoints at 200k, 300k, 400k, 500k, and 590k steps, with optional 5k-step cooldown branches from several of the intermediate checkpoints.
 
