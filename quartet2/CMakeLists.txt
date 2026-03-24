@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 # needs to be set before CUDA is enabled
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "100a;120a")
+    set(CMAKE_CUDA_ARCHITECTURES "100a;103a;120a")
 endif()
 
 project(EDEN CUDA CXX)
