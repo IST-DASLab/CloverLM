@@ -224,3 +224,4 @@ The authors would like Verda Cloud for computational support, and in particular 
 * `[EDEN]` Shay Vargaftik, Ran Ben Basat, Amit Portnoy, Gal Mendelson, Yaniv Ben Itzhak, and Michael Mitzenmacher. _EDEN: Communication-efficient and robust distributed mean estimation for federated learning._ In _International Conference on Machine Learning_, 2022\.
 * `[GQA]` Joshua Ainslie, James Lee-Thorp, Michiel De Jong, Yury Zemlyanskiy, Federico Lebron, and Sumit Sanghai. _GQA: Training generalized multi-query transformer models from multi-head checkpoints._ In _Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing_, pages 4895-4901, 2023\.
 * `[Beyond]` Georgios Vlassis, Saleh Ashkboos, Alexandra Volkova, Torsten Hoefler, and Dan Alistarh. _Beyond outliers: A study of optimizers under quantization._ _arXiv preprint arXiv:2509.23500_, 2025\.
+
