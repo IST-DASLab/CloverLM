@@ -1,0 +1,50 @@
+[project]
+name = "Expedition44"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    # Torch with cuda 13
+    "torch==2.10.0+cu130",
+    "torchvision==0.25.0+cu130",        # not really needed, but gets imported somewhere
+
+    # Datasets & tokenization
+    "datasets",           # Download datasets from Hugging Face
+    "transformers",       # Hugging Face tokenizers
+    "tokenmonster",       # TokenMonster tokenizers
+
+    # Visualization & utilities
+    "fvcore",             # Model summary
+    "torchview",          # Computational graph visualization
+    "plotext",            # LR schedule plotting in the terminal
+    "matplotlib",
+    "nvtx",
+
+    # Optimizers
+    "torch-shampoo",
+    "heavyball",          # Cautious Adam
+    "muon-optimizer",
+    "pytorch_optimizer",
+
+    # Evals
+    "lm_eval",
+
+    # Local submodule
+    "quartet2",
+
+    # Logging
+    "csvlogger @ git+https://github.com/gvlassis/csvlogger.git"
+    "microseconds_formatter @ git+https://github.com/gvlassis/microseconds_formatter.git"
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch           = { index = "pytorch-cu130" }
+torchvision     = { index = "pytorch-cu130" }
+torch-shampoo   = { git = "https://github.com/gvlassis/optimizers" }
+muon-optimizer  = { git = "https://github.com/KellerJordan/Muon" }
+pytorch_optimizer = { git = "https://github.com/gvlassis/pytorch_optimizer" }
+quartet2        = { path = "./quartet2" }

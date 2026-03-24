@@ -1,0 +1,14 @@
+datasets # To download datasets from Hugging Face
+transformers # To use any Hugging Face tokenizer
+tokenmonster # To use any TokenMonster tokenizer
+
+fvcore # For model summary
+torchview # For computational graph visualization
+plotext # Learning rate schedule plotting in the terminal
+
+git+https://github.com/gvlassis/optimizers # DistributedShampoo without picky pyproject.toml
+heavyball # For Cautious Adam
+git+https://github.com/KellerJordan/Muon
+git+https://github.com/gvlassis/pytorch_optimizer # Includes Scion correction for learnable gains
+
+lm_eval # Downstream evals

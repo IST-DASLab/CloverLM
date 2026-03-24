@@ -1,0 +1,3 @@
+[submodule "quartet2"]
+	path = quartet2
+	url = git@github.com:IST-DASLab/eden-fp4-cuda.git
