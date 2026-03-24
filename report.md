@@ -1,9 +1,6 @@
 ---
 title: "Speedrunning GPT3: Training an OPT-175B-Quality Model Cheaply using High-Quality Data and Native FP4"
-css: main_v2.css
 ---
-
-_CloverLM Training Report_
 
 Erik Schultheis<sup>1</sup>, Matin Ansaripour<sup>1</sup>, Andrei Panferov  
 ISTA  
