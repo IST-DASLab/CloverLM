@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <string>
 #include <stdexcept>
+#include <cmath>
+#include <cfloat>
 
 #include <vector_types.h>
 #include <cuda_fp16.h>
@@ -407,11 +409,24 @@ __device__ __forceinline__ int64_t cvt_quant_to_fp4_get_sf_out_offset(
     return SFOffset;
 }
 
+/// Approximate GPU reciprocal via PTX `rcp.approx.ftz.f32`
+
 static __device__ __forceinline__ float reciprocal_approximate_ftz(float a) {
     float b;
     asm volatile("rcp.approx.ftz.f32 %0, %1;\n" : "=f"(b) : "f"(a));
     return b;
 }
+
+/// Approximate GPU reciprocal via PTX `rcp.approx.ftz.f32`.
+/// Returns `ftz_fallback` and sets `a=0` if `a` is zero or denormal.
+static __device__ __forceinline__ float safe_rcp(float& a, float ftz_fallback) {
+    if (fabsf(a) < FLT_MIN) {
+        a = 0.f;
+        return ftz_fallback;
+    }
+    return reciprocal_approximate_ftz(a);
+}
+
 
 __device__ __forceinline__ m16_n16_k32_c_fragment<float> add_c_fragments(m16_n16_k32_c_fragment<float> lhs, m16_n16_k32_c_fragment<float> rhs) {
     m16_n16_k32_c_fragment<float> result;

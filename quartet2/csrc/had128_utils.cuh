@@ -190,7 +190,7 @@ __device__ __forceinline__ void eden_rounding(
             // is worse ?!
             // constexpr unsigned MASK = 0b1111'1111'1111u << 20u;
             float m3_scale = __uint_as_float((__float_as_uint(scale) & MASK));
-            float factor = m3_scale > 0 ? reciprocal_approximate_ftz(m3_scale) : 0.f;
+            float factor = safe_rcp(m3_scale, 0.f);
 
             group_n_vec converted;
             float2 x_y = {0.f, 0.f};

@@ -136,7 +136,7 @@ __global__ __launch_bounds__(NUM_WARPS*32, 1) void cutlass_group_transform_128_e
                 float m3_scale = __uint_as_float((__float_as_uint(scale) & MASK));
                 // TODO Masking == RTZ, is this OK here?
 
-                float factor = m3_scale > 0 ? reciprocal_approximate_ftz(m3_scale) : 0.f;
+                float factor = safe_rcp(m3_scale, 0.f);
 
                 group_n_vec converted;
                 float x_y = 0.f;
@@ -219,10 +219,12 @@ __global__ void eden_convert_scales_kernel(__nv_fp8_e4m3* scales_fp8, float* glo
 
     float max_scale = __uint_as_float(*max_scale_ptr);
     float global_scale = max_scale * inv_fp8_max;
+    float factor = safe_rcp(global_scale, 0.f);
+
     if (threadIdx.x == 0 && blockIdx.x == 0 && threadIdx.y == 0 && blockIdx.y == 0) {
         global_scale_ptr[0] = global_scale;
     }
-    float factor = global_scale != 0 ? reciprocal_approximate_ftz(global_scale) : 0.f;
+
     bf16x8 src_scales[2];
     src_scales[0] = bf16x8::load(scales_bf16 + col + row * cols);
     src_scales[1] = bf16x8::load(scales_bf16 + col + (row+32) * cols);

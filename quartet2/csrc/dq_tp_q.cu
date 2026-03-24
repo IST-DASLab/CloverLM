@@ -174,7 +174,7 @@ __global__ __launch_bounds__(NUM_WARPS*32, 1) void cutlass_dequant_tp_quant_kern
                 float m3_scale = __uint_as_float((__float_as_uint(scale) & MASK));
                 // TODO Masking == RTZ, is this OK here?
 
-                float factor = m3_scale > 0 ? reciprocal_approximate_ftz(m3_scale) : 0.f;
+                float factor = safe_rcp(m3_scale, 0.f);
 
                 group_n_vec converted;
                 float x_y = 0.f;

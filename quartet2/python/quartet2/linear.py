@@ -161,6 +161,7 @@ class Quartet_II_fn(torch.autograd.Function):
         ctx.out_dim = weight.shape[0]
         ctx.disable_backward_quant = disable_backward_quant
         ctx.scratch_amax = scratch_amax
+        ctx.had = had
 
         autocast_enabled = torch.is_autocast_enabled("cuda")
         if autocast_enabled:
@@ -185,7 +186,7 @@ class Quartet_II_fn(torch.autograd.Function):
             input_fp4 = quant_fp4(flat_input, amax=input_amax, scale_override=forward_scale_override, mode=mode)
             weight_fp4 = quant_fp4(weight, amax=weight_amax, scale_override=forward_scale_override, mode=mode)
         ctx.save_for_backward(input_fp4.fp4, input_fp4.micro_scales, input_fp4.tensor_scale,
-                              weight_fp4.fp4, weight_fp4.micro_scales, weight_fp4.tensor_scale, had)
+                              weight_fp4.fp4, weight_fp4.micro_scales, weight_fp4.tensor_scale)
         with nvtx_annotate("Matmul", color="blue"):
             res = _fp4_mm(
                 input_fp4.fp4, weight_fp4.fp4,
@@ -198,7 +199,7 @@ class Quartet_II_fn(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         # Load ctx and reshape
-        xfp4, xs, xm, wfp4, ws, wm, had = ctx.saved_tensors
+        xfp4, xs, xm, wfp4, ws, wm = ctx.saved_tensors
         backward_scale_override = (17 / 16) * 0.93
 
         autocast_enabled = torch.is_autocast_enabled("cuda")
@@ -206,7 +207,7 @@ class Quartet_II_fn(torch.autograd.Function):
             grad_output = grad_output.to(torch.bfloat16)
 
         # Re-randomize the rotation
-        had = rerotate_hadamard(had)
+        had = rerotate_hadamard(ctx.had)
         flat_grad_output = grad_output.reshape(-1, grad_output.shape[-1])
 
         if ctx.disable_backward_quant:
