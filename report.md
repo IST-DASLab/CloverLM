@@ -1,4 +1,4 @@
-# Speedrunning GPT3: A preliminary report.
+# Speedrunning GPT3: A Preliminary Report for CloverLM-4B 
 
 Erik Schultheis<sup>1</sup>, Matin Ansaripour<sup>1</sup>, Andrei Panferov  
 ISTA  
