@@ -1,0 +1,95 @@
+name: Build Python Extension
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+jobs:
+  build-python-cu128:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+    env:
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl git build-essential python3 python3-dev
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Verify uv installation
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          uv --version
+
+      - name: Set CUDA architecture environment variable
+        run: |
+          echo "CUDAARCHS=120a" >> $GITHUB_ENV
+
+      - name: Build Python package with uv
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          uv build
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-cu12
+          path: dist/*.whl
+          retention-days: 3
+
+  build-python-cu130:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:13.0.2-devel-ubuntu24.04
+
+    env:
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl git build-essential python3 python3-dev
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Verify uv installation
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          uv --version
+
+      - name: Set CUDA architecture environment variable
+        run: |
+          echo "CUDAARCHS=120f;100a;103a" >> $GITHUB_ENV
+
+      - name: Build Python package with uv
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          uv build
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-cu13
+          path: dist/*.whl
+          retention-days: 3

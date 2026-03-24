@@ -1,0 +1,53 @@
+[project]
+name = "quartet2"
+version = "0.0.2"
+description = "Quartet V2"
+#readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Erik Schultheis", email = "erik.schultheis@ist.ac.at" }
+]
+dependencies = [
+    "flashinfer-python>=0.6.3",     # nvfp4 gemm
+    "scipy>=1.17.0",                # hadamard
+    "torch>=2.10.0",
+    "nvtx",                         # TODO make this dev only
+]
+
+[project.optional-dependencies]
+test = [
+    "tqdm>=4.67.1",
+    "pytest"
+]
+
+[build-system]
+requires = ["scikit-build-core>=0.11", "nanobind"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.py-api = "cp312"
+build.targets = ["_quartet2"]
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+CMAKE_CUDA_ARCHITECTURES = {env="CUDAARCHS"}
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "csrc/*" },
+    { file = "python/*" },
+    { file = "CMakeLists.txt" }
+]
+#no-build-isolation-package = ["qutlass"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
