@@ -1,4 +1,5 @@
 # CloverLM
+PyTorch codebase used for the training and evaluation of CloverLM.
 
 ## Description
 
