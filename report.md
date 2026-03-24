@@ -16,7 +16,7 @@ Austria
 
 ## Abstract
 
-We describe a system to pretrain a 4B-parameter model, called CloverLM, aimed at performance similar to the standard GPT3-175 / OPT-175B models, when measured on popular zero-shot tasks, in a highly cost-effective manner. Our approach works by combining multiple known techniques: 
+We describe a system to pretrain a 4B-parameter model, called CloverLM, aimed at zero-shot performance similar to the standard GPT3-175 / OPT-175B models, in a highly cost-effective manner. Our approach works by combining multiple known techniques: 
 
 * Accurate native NVFP4 training via the Quartet II algorithm \[QuartetII\];
 * High-quality data training on the CLIMB dataset \[Climb\];
