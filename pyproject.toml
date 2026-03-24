@@ -32,7 +32,7 @@ dependencies = [
     "quartet2",
 
     # Logging
-    "csvlogger @ git+https://github.com/gvlassis/csvlogger.git"
+    "csvlogger @ git+https://github.com/gvlassis/csvlogger.git",
     "microseconds_formatter @ git+https://github.com/gvlassis/microseconds_formatter.git"
 ]
 
