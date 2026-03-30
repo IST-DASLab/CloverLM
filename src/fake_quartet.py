@@ -19,14 +19,12 @@ def get_hadamard_matrix(group_size: int, dtype: torch.dtype, device):
 
 
 def rerotate_hadamard(hadamard_matrix):
-    signs = torch.diag(
-        torch.randint(
-            0, 2, (hadamard_matrix.size(0),),
-            device=hadamard_matrix.device,
-            dtype=hadamard_matrix.dtype,
-        ) * 2 - 1
-    )
-    return hadamard_matrix @ signs
+    signs = torch.randint(
+        0, 2, (hadamard_matrix.size(0),),
+        device=hadamard_matrix.device,
+        dtype=hadamard_matrix.dtype,
+    ) * 2 - 1
+    return hadamard_matrix * signs[None, :]
 
 
 
@@ -186,15 +184,11 @@ def _eden_1x16s_fp4_kernel(
         tl.where(x_scaled_abs >= 0.25, 0.5,
         0))))))) * x_scaled_sign
 
-    x_scaled = tl.reshape(x_scaled, (BLOCK_SIZE // hadamard_dim, hadamard_dim))
-    x_fp4 = tl.reshape(x_fp4, (BLOCK_SIZE // hadamard_dim, hadamard_dim))
-
     num = tl.sum(x_scaled * x_scaled, axis=-1, keep_dims=True)
     denom = tl.sum(x_scaled * x_fp4, axis=-1, keep_dims=True)
     correction = tl.where(denom == 0.0, 1.0, num / denom)
 
-    scales = tl.reshape(s_dec_b_e4m3, (BLOCK_SIZE // hadamard_dim, hadamard_dim // group_size))
-    corrected_scales = tl.reshape(scales * correction, (BLOCK_SIZE // group_size, 1))
+    corrected_scales = s_dec_b_e4m3 * correction
 
     bitscales = tl.cast(corrected_scales.to(tl.float8e4nv), tl.uint8, bitcast=True)
     prevscale = tl.cast((bitscales - 1), tl.float8e4nv, bitcast=True).to(tl.float32)
@@ -324,7 +318,7 @@ class FakeQuartetFn(torch.autograd.Function):
 
 class FakeQuartetLinear(torch.nn.Linear):
 
-    def __init__(self, *args, hadamard_dim=32, delayed_amax=False,
+    def __init__(self, *args, hadamard_dim=128, delayed_amax=False,
                  disable_forward_quant=False, disable_backward_quant=False,
                  four_over_six=True, **kwargs):
         super().__init__(*args, **kwargs)
