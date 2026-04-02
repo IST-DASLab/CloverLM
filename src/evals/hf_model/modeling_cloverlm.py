@@ -256,12 +256,30 @@ class CloverLMForCausalLM(PreTrainedModel, GenerationMixin):
         self.post_init()
 
     @classmethod
+    def _resolve_safetensors(cls, pretrained_model_name_or_path, **kwargs):
+        """Locate model.safetensors for a local dir or Hub repo ID."""
+        import os
+        path = str(pretrained_model_name_or_path)
+        local = os.path.join(path, "model.safetensors")
+        if os.path.exists(local):
+            return local
+        try:
+            from huggingface_hub import hf_hub_download
+            return hf_hub_download(
+                repo_id=path,
+                filename="model.safetensors",
+                token=kwargs.get("token"),
+            )
+        except Exception:
+            return None
+
+    @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         import os
         from safetensors import safe_open
 
-        st_path = os.path.join(str(pretrained_model_name_or_path), "model.safetensors")
-        if not os.path.exists(st_path):
+        st_path = cls._resolve_safetensors(pretrained_model_name_or_path, **kwargs)
+        if st_path is None:
             return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
         with safe_open(st_path, framework="pt") as f:
