@@ -11,6 +11,31 @@ from .configuration_cloverlm import CloverLMConfig
 from .fake_quartet import FakeQuartetLinear
 
 
+# ── NVFP4 dequantization for checkpoint loading ─────────────────────────────
+
+def _dequant_nvfp4_state_dict(raw_sd, dtype=torch.bfloat16):
+    """Dequantize NVFP4-packed tensors using quartet2's _dq_fp4 on GPU.
+
+    The micro-scales are stored in cuBLAS blocked layout; quartet2's _dq_fp4
+    handles the unblocking correctly.
+    """
+    from quartet2.linear import _dq_fp4
+
+    scale2_bases = {k.removesuffix("_scale_2") for k in raw_sd if k.endswith("_scale_2")}
+    result = {}
+    for key, tensor in raw_sd.items():
+        if key.endswith(("_scale", "_scale_2")):
+            continue
+        if key in scale2_bases:
+            fp4 = tensor.cuda()
+            scales = raw_sd[f"{key}_scale"].cuda()
+            ts = raw_sd[f"{key}_scale_2"].float().item()
+            result[key] = _dq_fp4(fp4, scales, ts).to(dtype).cpu()
+        else:
+            result[key] = tensor.to(dtype) if tensor.is_floating_point() else tensor
+    return result
+
+
 
 def _sphere_norm(X, dim=-1):
     return F.normalize(X, dim=dim)
@@ -229,6 +254,64 @@ class CloverLMForCausalLM(PreTrainedModel, GenerationMixin):
             attn_backend=config.attn_backend,
         )
         self.post_init()
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        import os
+        from safetensors import safe_open
+
+        st_path = os.path.join(str(pretrained_model_name_or_path), "model.safetensors")
+        if not os.path.exists(st_path):
+            return super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        with safe_open(st_path, framework="pt") as f:
+            if not any(k.endswith("_scale_2") for k in f.keys()):
+                return super().from_pretrained(
+                    pretrained_model_name_or_path, *args, **kwargs,
+                )
+
+        from safetensors.torch import load_file
+
+        config = kwargs.pop("config", None)
+        if config is None:
+            config = cls.config_class.from_pretrained(
+                pretrained_model_name_or_path, trust_remote_code=True,
+            )
+
+        # Apply config overrides from kwargs (e.g. attn_backend, quartet_2_impl)
+        for key in list(kwargs.keys()):
+            if hasattr(config, key):
+                setattr(config, key, kwargs.pop(key))
+        kwargs.pop("trust_remote_code", None)
+
+        target_dtype = kwargs.pop("torch_dtype", None)
+        if target_dtype is None:
+            target_dtype = torch.bfloat16
+        if isinstance(target_dtype, str):
+            target_dtype = getattr(torch, target_dtype)
+
+        device_map = kwargs.pop("device_map", None)
+
+        raw = load_file(st_path)
+        state_dict = _dequant_nvfp4_state_dict(raw, target_dtype)
+
+        model = cls(config)
+        model.load_state_dict(state_dict, strict=False)
+        model = model.to(target_dtype)
+
+        if device_map is not None:
+            if isinstance(device_map, str) and device_map != "auto":
+                model = model.to(device_map)
+            elif isinstance(device_map, dict):
+                device = next(iter(device_map.values()))
+                model = model.to(device)
+            elif device_map == "auto":
+                from accelerate import dispatch_model, infer_auto_device_map
+                device_map_computed = infer_auto_device_map(model)
+                model = dispatch_model(model, device_map=device_map_computed)
+
+        model.eval()
+        return model
 
     def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
         logits = self.transformer(input_ids)

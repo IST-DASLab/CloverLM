@@ -1,6 +1,7 @@
 
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ PROJECT_DIR = os.path.dirname(SRC_DIR)
 sys.path.insert(0, SRC_DIR)
 
 import torch
+import torch.nn.functional as F
 from safetensors.torch import save_file
 
 
@@ -23,6 +25,44 @@ def str_to_bool(v):
     if v.lower() in ("false", "0", "no"):
         return False
     raise argparse.ArgumentTypeError(f"Boolean expected, got '{v}'")
+
+
+# ── NVFP4 quantization ──────────────────────────────────────────────────────
+
+NVFP4_GROUP_SIZE = 16
+
+
+def _quantize_weight_nvfp4(w):
+    """Quantize a 2-D weight tensor to NVFP4 on GPU via quartet2.
+
+    Returns (fp4, micro_scales, tensor_scale) moved back to CPU.
+      fp4          : float4_e2m1fn_x2  [rows, cols // 2]
+      micro_scales : float8_e4m3fn     [rows, cols // 16]
+      tensor_scale : float32           scalar
+    """
+    from quartet2.quant import quant_fp4, NVFP4QuantMode
+
+    assert w.ndim == 2
+    rows, cols = w.shape
+    pad_r, pad_c = (-rows) % 128, (-cols) % 128
+    if pad_r or pad_c:
+        w = F.pad(w, (0, pad_c, 0, pad_r))
+
+    w_gpu = w.to(device="cuda", dtype=torch.bfloat16).contiguous()
+    nvfp4 = quant_fp4(w_gpu, scale_override=1.0, mode=NVFP4QuantMode.FOUR_SIX)
+
+    fp4 = nvfp4.fp4[:rows, :cols // 2].view(torch.float4_e2m1fn_x2)
+    scales = nvfp4.micro_scales[:rows, :cols // NVFP4_GROUP_SIZE]
+    return fp4.cpu(), scales.cpu(), nvfp4.tensor_scale.cpu()
+
+
+def _is_quantizable(key):
+    """True for 2-D block weights (not embedding, output head, or norms)."""
+    if "emb.weight" in key or key.endswith("linear.weight"):
+        return False
+    if ".weight" in key:
+        return True
+    return False
 
 
 def detect_architecture(state_dict):
@@ -76,6 +116,12 @@ def parse_args():
     p.add_argument("--quartet_2_impl", type=str, default="pseudoquant")
     p.add_argument("--attn_backend", default="pytorch",
                     choices=["pytorch", "flash2", "flash3", "flash4"])
+    p.add_argument("--dtype", default="bfloat16",
+                    choices=["float32", "bfloat16", "float16"],
+                    help="Dtype for non-quantized weights (default: bfloat16)")
+    p.add_argument("--nvfp4", action="store_true",
+                    help="Quantize block weights to NVFP4 (4-bit with "
+                         "two-level micro-block scaling for Blackwell)")
     return p.parse_args()
 
 
@@ -138,12 +184,33 @@ def main():
           f"zeta={arch['zeta']}  ratio={arch['ratio']}  "
           f"d={arch['d']}  ~{n_params/1e9:.2f}B params")
 
+    target_dtype = getattr(torch, args.dtype)
+
     # Prefix every key with "transformer." so it matches the HF wrapper.
     # Clone shared tensors (weight tying: emb.weight == linear.weight)
     # so safetensors doesn't complain about shared memory.
     hf_state_dict = {}
-    for k, v in state_dict.items():
-        hf_state_dict[f"transformer.{k}"] = v.clone()
+
+    if args.nvfp4:
+        print(f"\n  NVFP4 quantization enabled (group_size={NVFP4_GROUP_SIZE})")
+        quantized_keys = []
+        for k, v in state_dict.items():
+            hf_key = f"transformer.{k}"
+            if v.ndim == 2 and _is_quantizable(hf_key):
+                packed, scale, scale2 = _quantize_weight_nvfp4(v)
+                hf_state_dict[hf_key] = packed
+                hf_state_dict[f"{hf_key}_scale"] = scale
+                hf_state_dict[f"{hf_key}_scale_2"] = scale2
+                quantized_keys.append(hf_key)
+            else:
+                hf_state_dict[hf_key] = v.clone().to(target_dtype)
+        print(f"  quantized {len(quantized_keys)} weight tensors")
+    else:
+        for k, v in state_dict.items():
+            hf_state_dict[f"transformer.{k}"] = v.clone().to(target_dtype)
+
+    size_gb = sum(v.numel() * v.element_size() for v in hf_state_dict.values()) / 1e9
+    print(f"  output size: {size_gb:.2f} GB")
 
     # ------------------------------------------------------------------
     # 2.  Save weights as safetensors
@@ -169,6 +236,7 @@ def main():
         quartet_2_impl=args.quartet_2_impl,
         weight_tying=True,
         attn_backend=args.attn_backend,
+        torch_dtype=args.dtype,
         architectures=["CloverLMForCausalLM"],
         auto_map={
             "AutoConfig": "configuration_cloverlm.CloverLMConfig",
@@ -181,10 +249,24 @@ def main():
     config.save_pretrained(args.output_dir)
     print(f"Saved config.json → {args.output_dir}/config.json")
 
+    if args.nvfp4:
+        hf_quant_config = {
+            "producer": {"name": "cloverlm_converter", "version": "1.0"},
+            "quantization": {
+                "quant_algo": "NVFP4",
+                "kv_cache_quant_algo": None,
+                "group_size": NVFP4_GROUP_SIZE,
+                "exclude_modules": ["emb", "linear"],
+            },
+        }
+        hf_qc_path = os.path.join(args.output_dir, "hf_quant_config.json")
+        with open(hf_qc_path, "w") as f:
+            json.dump(hf_quant_config, f, indent=2)
+        print(f"Saved hf_quant_config.json → {hf_qc_path}")
+
     # ------------------------------------------------------------------
     # 3b. Write tokenizer_config.json
     # ------------------------------------------------------------------
-    import json
     tok_config = {
         "tokenizer_class": "CloverLMTokenizer",
         "auto_map": {

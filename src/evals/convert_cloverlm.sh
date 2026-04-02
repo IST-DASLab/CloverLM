@@ -38,7 +38,8 @@ HF_DIR="$TMP_DIR/hf-step-${STEP}"
 echo "=== [2/2] Converting .pt → HF dir at $HF_DIR ==="
 python "$HF_CONVERT_SCRIPT" \
     "$PT_FILE" "$HF_DIR" \
-    --attn_backend pytorch
+    --attn_backend pytorch \
+    --nvfp4
 
 if [[ ! -f "$HF_DIR/config.json" ]]; then
     echo "ERROR: HF conversion failed (no config.json)"
