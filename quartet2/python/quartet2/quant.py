@@ -11,6 +11,11 @@ def _four_six_fp4_op(o: torch.Tensor, s: torch.Tensor, t: torch.Tensor, x: torch
     _quartet2.four_six_fp4(o, s.view(torch.uint8), t, x.detach(), amax, scale_override)
 
 
+@torch.library.custom_op("quartet2::gridflip_four_six", mutates_args=("o", "s", "t"))
+def _gridflip_four_six_fp4_op(o: torch.Tensor, s: torch.Tensor, t: torch.Tensor, x: torch.Tensor, amax: torch.Tensor, scale_override: float, grid_shift: float) -> None:
+    _quartet2.gridflip_four_six_fp4(o, s.view(torch.uint8), t, x.detach(), amax, scale_override, grid_shift)
+
+
 @torch.library.custom_op("quartet2::rtn", mutates_args=("o", "s", "t"))
 def _rtn_fp4_op(o: torch.Tensor, s: torch.Tensor, t: torch.Tensor, x: torch.Tensor, amax: torch.Tensor, scale_override: float) -> None:
     _quartet2.rtn_fp4(o, s.view(torch.uint8), t, x.detach(), amax, scale_override)
@@ -135,6 +140,24 @@ def quant_fp4(x, *, scale_override: float, amax: torch.Tensor = None, mode=NVFP4
     else:
         raise ValueError(f"Unknown NVFP4QuantMode: {mode}")
 
+    return NVFP4Quant(q, s, global_scale)
+
+
+def quant_gridflip_fp4(x, *, scale_override: float, grid_shift: float, amax: torch.Tensor = None) -> NVFP4Quant:
+    q = torch.empty((x.shape[0], x.shape[1] // 2), device=x.device, dtype=torch.uint8)
+    s = torch.empty((x.shape[0], x.shape[1] // 16), device=x.device, dtype=torch.float8_e4m3fn)
+    assert x.dtype == torch.bfloat16
+    assert x.is_cuda
+    assert x.is_contiguous()
+    assert x.shape[0] % 128 == 0
+    assert x.shape[1] % 128 == 0
+
+    if amax is None:
+        amax = torch.max(torch.abs(x)).to(torch.float32)
+    else:
+        assert amax.dtype == torch.float32
+    global_scale = torch.empty((), device=x.device, dtype=torch.float32)
+    _gridflip_four_six_fp4_op(q, s, global_scale, x, amax, scale_override, grid_shift)
     return NVFP4Quant(q, s, global_scale)
 
 
