@@ -89,18 +89,50 @@ parser.add_argument("--eot_id", help="End-Of-Text token id", type=int, default=1
 
 parser.add_argument("--quartet", help="quartet2.linear.Quartet_II_linear instead of torch.nn.Linear", type=utils.str_to_bool, default=True)
 parser.add_argument("--fake_quartet", help="Fake (simulated) NVFP4 quantization", type=utils.str_to_bool, default=False)
+parser.add_argument("--quartet_matmul_backend", help="Matmul backend for real Quartet-II linears", choices=["flashinfer", "qutlass", "dequantized"], default="flashinfer")
+parser.add_argument("--quartet_weight_quantizer", help="Weight quantizer for real Quartet-II linears", choices=["four_six", "gridflip"], default="four_six")
+parser.add_argument("--gridflip_shift", help="GridFlip shifted-grid correction value", type=float, default=0.25)
+parser.add_argument("--wush", help="Apply blockwise WUSH transforms in Quartet-II forward quantization", type=utils.str_to_bool, default=False)
+parser.add_argument("--wush_update_freq", help="Every how many optimizer steps to refresh WUSH transforms", type=int, default=200)
+parser.add_argument("--wush_damp", help="Tikhonov damping for KFAC WUSH second-moment estimates", type=float, default=1e-3)
+parser.add_argument("--wush_s_min", help="Singular value floor for KFAC WUSH transform updates", type=float, default=1e-2)
+parser.add_argument("--wush_max_cond", help="Per-block condition-number fallback threshold for KFAC WUSH", type=float, default=1e4)
+parser.add_argument("--wush_ema_decay", help="EMA decay for KFAC WUSH activation second moments", type=float, default=0.99)
+parser.add_argument("--wush_group_size", help="Block size for KFAC WUSH transforms", type=int, default=128)
+parser.add_argument("--wush_g_identity", help="Use identity output KFAC factor G when recomputing WUSH transforms", type=utils.str_to_bool, default=True)
 parser.add_argument("--num_blocks", help="Number of Transformer blocks", type=int, default=4)
 parser.add_argument("--heads", help="Number of Q heads in the MHSA", type=int, default=6)
 parser.add_argument("--ratio", help="Ratio between Q heads and KV heads", type=int, default=3)
 parser.add_argument("--tied_embeddings", help="Tie input and output embeddings", type=utils.str_to_bool, default=True)
 parser.add_argument("--dataset_path", help="If passed, overrides where the dataset is loaded from", type=os.path.abspath, default=None)
 parser.add_argument("--dataset_seed", help="Seed to use for dataset sampling.", type=int, default=-1)
+parser.add_argument("--seed", help="Seed for model initialization and torch RNGs. Negative means do not set it.", type=int, default=-1)
 parser.add_argument("--wandb_kwargs", help="Keyword arguments for wandb.init()", type=json.loads, default=None)
 parser.add_argument("--val_fixed", help="As an extra, evaluate the loss on fixed validation batches", type=utils.str_to_bool, default=True)
 args=parser.parse_args()
 
 if args.quartet and args.fake_quartet:
     parser.error("--quartet and --fake_quartet are mutually exclusive")
+if not args.quartet and args.quartet_matmul_backend != "flashinfer":
+    parser.error("--quartet_matmul_backend applies only when --quartet true")
+if not args.quartet and args.quartet_weight_quantizer != "four_six":
+    parser.error("--quartet_weight_quantizer applies only when --quartet true")
+if args.quartet_weight_quantizer == "gridflip" and args.quartet_matmul_backend == "flashinfer":
+    parser.error("--quartet_weight_quantizer gridflip requires --quartet_matmul_backend qutlass or dequantized")
+if args.gridflip_shift < 0:
+    parser.error("--gridflip_shift must be non-negative")
+if args.quartet_weight_quantizer == "gridflip" and args.comp:
+    if "MASTER_ADDR" not in os.environ or int(os.getenv("RANK", 0)) == 0:
+        print("📌 GridFlip's fused matmul adapter is not torch.compile-ready in this integration, so disabling --comp for this run.")
+    args.comp = False
+if args.wush and not args.quartet:
+    parser.error("--wush currently applies to real Quartet-II linears; use --quartet true")
+if args.wush and (args.wush_group_size & (args.wush_group_size - 1)):
+    parser.error("--wush_group_size must be a power of two for the Hadamard transform")
+if args.wush and args.comp:
+    if "MASTER_ADDR" not in os.environ or int(os.getenv("RANK", 0)) == 0:
+        print("📌 WUSH uses dynamic eigendecompositions, so disabling --comp for this run.")
+    args.comp = False
 
 if torch.distributed.is_torchelastic_launched():
     # Get environment variables set by torchrun
@@ -128,6 +160,14 @@ else:
     model_device = f"{model_device_type}:{model_device_index}"
     accumulation = args.batch_size//args.micro_batch_size
     torch.cuda.set_device(model_device)
+
+gpu_reservation_gib = max(0, int(os.getenv("CLOVERLM_GPU_RESERVATION_GIB", "0")))
+if gpu_reservation_gib:
+    # Optional keepalive for external GPU reservation monitors during CPU-side
+    # dataset loading. The allocation is released before model initialization.
+    _gpu_reservation_touch = torch.empty(gpu_reservation_gib * 1024 ** 3, device=model_device, dtype=torch.uint8)
+else:
+    _gpu_reservation_touch = None
 
 subpath_dir = os.path.dirname(os.path.abspath(args.NAME))
 if master: os.makedirs(subpath_dir, exist_ok=True)
@@ -202,10 +242,26 @@ if args.dataset_device_type == "cpu":
 elif args.dataset_device_type == "cuda":
     dataset_device = model_device
 
+if args.seed >= 0:
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+
 if master: print("💾 Loading dataset")
 train_iterator = data.utils_data.get_iterator(args.dataset, "train", dataset_device, args.micro_batch_size, args.context, RANK, args.dataset_path, args.dataset_seed)
 val_iterator = data.utils_data.get_iterator(args.dataset, "val", dataset_device, args.micro_batch_size, args.context, RANK, args.dataset_path, args.dataset_seed)
 fixed_val_batch = next(val_iterator)
+if _gpu_reservation_touch is not None:
+    del _gpu_reservation_touch
+    torch.cuda.empty_cache()
+
+if args.quartet:
+    import quartet2.linear
+    quartet2.linear.set_fp4_mm_backend(args.quartet_matmul_backend)
+    quartet2.linear.set_fp4_weight_quantizer(
+        args.quartet_weight_quantizer,
+        gridflip_shift=args.gridflip_shift,
+    )
 
 if master: print("🧠 Initializing model")
 model_or_ddp, opts = models.utils_models.get_model_opts(
@@ -216,6 +272,12 @@ model_or_ddp, opts = models.utils_models.get_model_opts(
     args.warning and master, args.backend, model_device, args.comp, args.quartet, args.fake_quartet,
     num_blocks=args.num_blocks, heads=args.heads, ratio=args.ratio, tied_embeddings=args.tied_embeddings)
 model = model_or_ddp.module if torch.distributed.is_initialized() else model_or_ddp
+
+if args.wush:
+    import quartet2.linear
+    quartet2.linear.configure_wush(model, True, args.wush_update_freq, args.wush_damp, args.wush_s_min,
+                                   args.wush_max_cond, args.wush_ema_decay, args.wush_group_size,
+                                   args.wush_g_identity)
 
 checkpoint_dict["checkpoint"].model = model
 checkpoint_dict["checkpoint"].opts = opts
@@ -326,7 +388,8 @@ while checkpoint_dict["checkpoint"].train_batch < args.train_batches:
                 with torch.autocast(device_type=model_device_type, dtype=args.dtype):
                     micro_train_loss = get_loss(args.dataset, model_or_ddp, batch_train_X, batch_train_Y, args.label_smoothing)[1] * loss_scale_acc
                     train_loss += micro_train_loss.detach()
-                scaler.scale(micro_train_loss).backward()
+                retain_accumulation_graph = args.quartet and micro_train_batch < accumulation - 1
+                scaler.scale(micro_train_loss).backward(retain_graph=retain_accumulation_graph)
 
     step_timer.end()
     
@@ -450,6 +513,13 @@ while checkpoint_dict["checkpoint"].train_batch < args.train_batches:
     scaler.update()
     opt_timer.end()
 
+    next_train_batch = checkpoint_dict["checkpoint"].train_batch + 1
+    if args.wush and next_train_batch > 0 and next_train_batch % args.wush_update_freq == 0:
+        import quartet2.linear
+        n_updated = quartet2.linear.update_wush_transforms(model, sync_distributed=torch.distributed.is_initialized())
+        if master:
+            print(f"📌 WUSH recomputed transforms for {n_updated} Quartet-II layers at step {next_train_batch}")
+
     lr = schedulers[0].get_last_lr()[0]
     for scheduler in schedulers:
         scheduler.step()
@@ -464,7 +534,7 @@ while checkpoint_dict["checkpoint"].train_batch < args.train_batches:
     checkpoint_dict["checkpoint"].train_batch += 1
 
     current_batch = checkpoint_dict["checkpoint"].train_batch
-    if current_batch > 1 and ((current_batch % args.checkpoint_freq == 0) or (current_batch == last_batch)):
+    if args.checkpoint_freq != utils.INF and current_batch > 1 and ((current_batch % args.checkpoint_freq == 0) or (current_batch == last_batch)):
         checkpoint_id = f"{checkpoint_path}/{current_batch}"
         torch.distributed.checkpoint.save(checkpoint_dict, checkpoint_id=checkpoint_id)
         if master:

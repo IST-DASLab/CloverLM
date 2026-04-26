@@ -49,6 +49,7 @@ void rht128_requant(
 void eden_fp4(__nv_fp4x4_e2m1* y_ptr, __nv_fp8_e4m3* scale_ptr, float* global_scale_ptr, const nv_bfloat16* x_ptr, const float* amax_ptr, float scale_override, long seed, long rows, long cols);
 void rtn_fp4(__nv_fp4x4_e2m1* y_ptr, __nv_fp8_e4m3* scale_ptr, float* global_scale_ptr, const nv_bfloat16* x_ptr, const float* amax_ptr, float scale_override, long rows, long cols);
 void four_six_fp4(__nv_fp4x4_e2m1* y_ptr, __nv_fp8_e4m3* scale_ptr, float* global_scale_ptr, const nv_bfloat16* x_ptr, const float* amax_ptr, float scale_override, long rows, long cols);
+void gridflip_four_six_fp4(__nv_fp4x4_e2m1* y_ptr, __nv_fp8_e4m3* scale_ptr, float* global_scale_ptr, const nv_bfloat16* x_ptr, const float* amax_ptr, float scale_override, float grid_shift, long rows, long cols);
 void dequant_tp_had_quant(
     __nv_fp4x2_storage_t* y, __nv_fp8_e4m3* scales_fp8, float* global_scale_ptr,
     nv_bfloat16* scratch_scales, unsigned* max_scale, const nv_bfloat16* h,
@@ -272,6 +273,38 @@ void four_six_fp4_binding(
         scale_override, inp.shape(0), inp.shape(1));
 }
 
+void gridflip_four_six_fp4_binding(
+    const CudaArray<>& out,
+    const CudaArray<>& scales,
+    const CudaArray<float, nb::shape<>>& global_scale,
+    const CudaArray<nb::ro>& inp,
+    const CudaArray<float, nb::ro>& amax_ptr,
+    float scale_override,
+    float grid_shift
+    )
+{
+    nb::dlpack::dtype bf16_dt{static_cast<std::uint8_t>(nb::dlpack::dtype_code::Bfloat), 16, 1};
+
+    CHECK_EQ(inp.ndim(), 2ul);
+    CHECK_EQ(out.ndim(), 2ul);
+
+    CHECK_EQ(out.shape(0), inp.shape(0));
+    CHECK_EQ(out.size(), inp.size() / 2);
+    CHECK_EQ(out.dtype().bits, static_cast<uint8_t>(8));
+    CHECK_EQ(scales.size(), inp.size() / 16);
+    CHECK_EQ(scales.dtype().bits, static_cast<uint8_t>(8));
+    CHECK_EQ(inp.dtype(), bf16_dt);
+    CHECK(global_scale.data() != amax_ptr.data());
+
+    gridflip_four_six_fp4(
+        reinterpret_cast<__nv_fp4x4_e2m1*>(out.data()),
+        reinterpret_cast<__nv_fp8_e4m3*>(scales.data()),
+        global_scale.data(),
+        reinterpret_cast<const nv_bfloat16*>(inp.data()),
+        amax_ptr.data(),
+        scale_override, grid_shift, inp.shape(0), inp.shape(1));
+}
+
 void rtn_fp4_binding(
     const CudaArray<>& out,
     const CudaArray<>& scales,
@@ -422,5 +455,6 @@ NB_MODULE(_quartet2, m) {
 
     m.def("eden_fp4", &eden_fp4_binding,  nb::arg("out"), nb::arg("scales"), nb::arg("global_scale"), nb::arg("input"), nb::arg("amax"), nb::arg("scale_override"), nb::arg("seed"));
     m.def("four_six_fp4", &four_six_fp4_binding, nb::arg("out"), nb::arg("scales"), nb::arg("global_scale"), nb::arg("input"), nb::arg("amax"), nb::arg("scale_override"));
+    m.def("gridflip_four_six_fp4", &gridflip_four_six_fp4_binding, nb::arg("out"), nb::arg("scales"), nb::arg("global_scale"), nb::arg("input"), nb::arg("amax"), nb::arg("scale_override"), nb::arg("grid_shift"));
     m.def("rtn_fp4", &rtn_fp4_binding, nb::arg("out"), nb::arg("scales"), nb::arg("global_scale"), nb::arg("input"), nb::arg("amax"), nb::arg("scale_override"));
 }
