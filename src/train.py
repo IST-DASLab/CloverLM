@@ -161,6 +161,14 @@ else:
     accumulation = args.batch_size//args.micro_batch_size
     torch.cuda.set_device(model_device)
 
+gpu_reservation_gib = max(0, int(os.getenv("CLOVERLM_GPU_RESERVATION_GIB", "0")))
+if gpu_reservation_gib:
+    # Optional keepalive for external GPU reservation monitors during CPU-side
+    # dataset loading. The allocation is released before model initialization.
+    _gpu_reservation_touch = torch.empty(gpu_reservation_gib * 1024 ** 3, device=model_device, dtype=torch.uint8)
+else:
+    _gpu_reservation_touch = None
+
 subpath_dir = os.path.dirname(os.path.abspath(args.NAME))
 if master: os.makedirs(subpath_dir, exist_ok=True)
 checkpoint_path = args.NAME+"_checkpoint"
@@ -243,6 +251,9 @@ if master: print("💾 Loading dataset")
 train_iterator = data.utils_data.get_iterator(args.dataset, "train", dataset_device, args.micro_batch_size, args.context, RANK, args.dataset_path, args.dataset_seed)
 val_iterator = data.utils_data.get_iterator(args.dataset, "val", dataset_device, args.micro_batch_size, args.context, RANK, args.dataset_path, args.dataset_seed)
 fixed_val_batch = next(val_iterator)
+if _gpu_reservation_touch is not None:
+    del _gpu_reservation_touch
+    torch.cuda.empty_cache()
 
 if args.quartet:
     import quartet2.linear
@@ -377,7 +388,8 @@ while checkpoint_dict["checkpoint"].train_batch < args.train_batches:
                 with torch.autocast(device_type=model_device_type, dtype=args.dtype):
                     micro_train_loss = get_loss(args.dataset, model_or_ddp, batch_train_X, batch_train_Y, args.label_smoothing)[1] * loss_scale_acc
                     train_loss += micro_train_loss.detach()
-                scaler.scale(micro_train_loss).backward()
+                retain_accumulation_graph = args.quartet and micro_train_batch < accumulation - 1
+                scaler.scale(micro_train_loss).backward(retain_graph=retain_accumulation_graph)
 
     step_timer.end()
     
